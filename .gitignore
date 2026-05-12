@@ -1,0 +1,18 @@
+# Root-level ignores (Flutter ignores live under mobile/)
+.DS_Store
+Thumbs.db
+*.log
+
+# Python / ML local environments & caches
+ml/venv/
+ml/**/__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ipynb_checkpoints/
+
+# Local dataset mirrors (large; keep out of Git — download separately / document URL)
+ml/data/downloads/
+
+# Trained weights / checkpoints (large binaries — release separately or use Git LFS)
+ml/checkpoints/

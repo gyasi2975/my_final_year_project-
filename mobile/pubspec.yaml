@@ -1,0 +1,49 @@
+name: bone_fracture_app
+description: Mobile-based ML system for bone fracture detection and heat map visualization. Offline-capable.
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  tflite_flutter: ^0.10.4
+  image_picker: ^0.8.7
+  image: ^4.0.17
+  path_provider: ^2.1.2
+  google_fonts: ^6.2.1
+  cupertino_icons: ^1.0.6
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+  flutter_launcher_icons: ^0.14.4
+  flutter_native_splash: ^2.4.1
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/
+  fonts: []
+
+# App icon: add your logo as assets/icon/app_icon.png (1024x1024 recommended), then run:
+#   dart run flutter_launcher_icons
+flutter_launcher_icons:
+  android: true
+  ios: false
+  image_path: "assets/icon/app_icon.png"
+  adaptive_icon_background: "#FFFFFF"
+  adaptive_icon_foreground: "assets/icon/app_icon.png"
+  # Lower inset = foreground drawn larger inside the adaptive icon mask (standard 66dp safe zone).
+  adaptive_icon_foreground_inset: 0
+
+# Native launch splash (Android): solid color only — no launcher bitmap.
+flutter_native_splash:
+  color: "#0B1020"
+  android: true
+  ios: false
+  android_12:
+    color: "#0B1020"
