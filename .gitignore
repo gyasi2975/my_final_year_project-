@@ -13,6 +13,7 @@ ml/**/__pycache__/
 
 # Local dataset mirrors (large; keep out of Git — download separately / document URL)
 ml/data/downloads/
+ml/data/raw/
 
 # Trained weights / checkpoints (large binaries — release separately or use Git LFS)
 ml/checkpoints/

@@ -72,9 +72,90 @@ def get_dataset_from_folders(
     return ds
 
 
+def count_split_images(split: str) -> int:
+    """Number of image files in raw/{split}/."""
+    split_dir = RAW_DIR / split
+    if not split_dir.exists():
+        return 0
+    return sum(
+        1
+        for f in split_dir.rglob("*.*")
+        if f.suffix.lower() in (".png", ".jpg", ".jpeg", ".bmp")
+    )
+
+
+def index_multitask_split(split: str):
+    """
+    Build deterministic label index for a split.
+    Returns (image_paths, body_labels, fracture_labels, fracture_type_labels, type_labeled).
+    """
+    split_dir = RAW_DIR / split
+    if not split_dir.exists():
+        return None
+
+    image_paths = []
+    body_labels = []
+    fracture_labels = []
+    fracture_type_labels = []
+    type_labeled = []
+
+    body_to_idx = {b: i for i, b in enumerate(config.BODY_PARTS)}
+    type_to_idx = {t: i for i, t in enumerate(config.FRACTURE_TYPES)}
+
+    for body_part in sorted(split_dir.iterdir()):
+        if not body_part.is_dir():
+            continue
+        body_idx = body_to_idx.get(body_part.name.lower(), -1)
+        if body_idx < 0:
+            continue
+        for label_dir in sorted(body_part.iterdir()):
+            if not label_dir.is_dir():
+                continue
+            name = label_dir.name.lower()
+            if name == "fracture_unlabeled":
+                has_fracture = True
+                fracture_type_idx = 0
+                labeled_type = False
+            else:
+                has_fracture = name.startswith("fracture_") or (
+                    name != "normal" and "fracture" in name
+                )
+                labeled_type = False
+                fracture_type_idx = 0
+                if has_fracture:
+                    for ft in config.FRACTURE_TYPES:
+                        if ft in name:
+                            fracture_type_idx = type_to_idx[ft]
+                            labeled_type = True
+                            break
+            fracture_idx = 1 if has_fracture else 0
+
+            for f in sorted(label_dir.glob("*.*")):
+                if f.suffix.lower() not in (".png", ".jpg", ".jpeg", ".bmp"):
+                    continue
+                image_paths.append(str(f))
+                body_labels.append(body_idx)
+                fracture_labels.append(fracture_idx)
+                fracture_type_labels.append(fracture_type_idx)
+                type_labeled.append(labeled_type)
+
+    if not image_paths:
+        return None
+
+    return (
+        image_paths,
+        np.array(body_labels, dtype=np.int32),
+        np.array(fracture_labels, dtype=np.int32),
+        np.array(fracture_type_labels, dtype=np.int32),
+        np.array(type_labeled, dtype=bool),
+    )
+
+
 def get_multitask_dataset(
     split: str,
     batch_size: int = config.BATCH_SIZE,
+    repeat: bool = True,
+    shuffle: bool | None = None,
 ):
     """
     Multi-task dataset: body part + fracture (binary) + fracture type.
@@ -82,48 +163,11 @@ def get_multitask_dataset(
     or raw/{split}/{body_part}/normal/image.png
     """
     import tensorflow as tf
-    split_dir = RAW_DIR / split
-    if not split_dir.exists():
+
+    indexed = index_multitask_split(split)
+    if indexed is None:
         return None
-
-    image_paths = []
-    body_labels = []
-    fracture_labels = []  # 0 no fracture, 1 fracture
-    fracture_type_labels = []  # 0 simple, 1 comminuted, 2 greenstick (only when fracture=1)
-
-    body_to_idx = {b: i for i, b in enumerate(config.BODY_PARTS)}
-    type_to_idx = {t: i for i, t in enumerate(config.FRACTURE_TYPES)}
-
-    for body_part in split_dir.iterdir():
-        if not body_part.is_dir():
-            continue
-        body_idx = body_to_idx.get(body_part.name, 0)
-        for label_dir in body_part.iterdir():
-            if not label_dir.is_dir():
-                continue
-            # e.g. "normal", "fracture_simple", "fracture_comminuted", "fracture_greenstick"
-            name = label_dir.name.lower()
-            has_fracture = name.startswith("fracture_") or (name != "normal" and "fracture" in name)
-            fracture_idx = 1 if has_fracture else 0
-            if has_fracture:
-                for ft in config.FRACTURE_TYPES:
-                    if ft in name:
-                        fracture_type_idx = type_to_idx[ft]
-                        break
-                else:
-                    fracture_type_idx = 0
-            else:
-                fracture_type_idx = 0
-
-            for f in label_dir.glob("*.*"):
-                if f.suffix.lower() in (".png", ".jpg", ".jpeg", ".bmp"):
-                    image_paths.append(str(f))
-                    body_labels.append(body_idx)
-                    fracture_labels.append(fracture_idx)
-                    fracture_type_labels.append(fracture_type_idx)
-
-    if not image_paths:
-        return None
+    image_paths, body_labels, fracture_labels, fracture_type_labels, _type_labeled = indexed
 
     def load_and_preprocess(path):
         """Load image in Python so we can catch corrupt files; return numpy array."""
@@ -141,11 +185,14 @@ def get_multitask_dataset(
         for i in range(len(image_paths)):
             x = load_and_preprocess(image_paths[i])
             y = {
-                "body_part": body_labels[i],
-                "fracture": fracture_labels[i],
-                "fracture_type": fracture_type_labels[i],
+                "body_part": int(body_labels[i]),
+                "fracture": int(fracture_labels[i]),
+                "fracture_type": int(fracture_type_labels[i]),
             }
             yield x, y
+
+    if shuffle is None:
+        shuffle = split == "train"
 
     ds = tf.data.Dataset.from_generator(
         gen,
@@ -158,5 +205,10 @@ def get_multitask_dataset(
             },
         ),
     )
-    ds = ds.repeat().batch(batch_size).prefetch(tf.data.AUTOTUNE)
+    if shuffle:
+        ds = ds.shuffle(buffer_size=min(4096, len(image_paths)), seed=42, reshuffle_each_iteration=True)
+    ds = ds.batch(batch_size)
+    if repeat:
+        ds = ds.repeat()
+    ds = ds.prefetch(tf.data.AUTOTUNE)
     return ds
