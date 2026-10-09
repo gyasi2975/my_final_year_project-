@@ -10,12 +10,20 @@ class InferenceResult {
   /// fracture decision (reduces false positives on unrelated photos).
   final String? unsuitableReason;
 
+  /// Confidence in the predicted body part (0–1), when anatomy checks pass.
+  final double? bodyPartConfidence;
+
+  /// Grad-CAM heatmap grid (7×7, values 0–1) when fracture is detected.
+  final List<double>? heatmapGrid;
+
   const InferenceResult({
     required this.bodyPartName,
     required this.hasFracture,
     required this.fractureConfidence,
     required this.fractureTypeName,
     this.unsuitableReason,
+    this.bodyPartConfidence,
+    this.heatmapGrid,
   });
 
   static InferenceResult get placeholder => const InferenceResult(

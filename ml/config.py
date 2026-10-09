@@ -27,6 +27,14 @@ FRACTURE_TYPES = ["simple", "comminuted", "greenstick"]
 MODEL_INPUT_SHAPE = (IMG_SIZE, IMG_SIZE, 3)
 BATCH_SIZE = 32
 EPOCHS = 20
+BODY_PART_BRANCH_UNITS = 256
+
+# Multi-task loss weights (body part is hardest; balance training toward it)
+LOSS_WEIGHTS = {
+    "body_part": 2.5,
+    "fracture": 1.0,
+    "fracture_type": 0.5,
+}
 
 # Evaluation metrics (proposal: accuracy, precision, recall, F1-score)
 METRICS = ["accuracy", "precision", "recall", "f1"]

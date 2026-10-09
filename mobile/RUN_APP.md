@@ -8,22 +8,31 @@
 
 ## 2. Run the app
 
-From the project root:
+From the mobile folder:
 
 ```powershell
-cd d:\Projects\gloria\mobile
+cd c:\Users\boaky\Music\gloria\mobile
 flutter pub get
 flutter run
 ```
 
-Pick a device when prompted (Chrome, Windows, or a connected Android device).
+Pick a device when prompted (Windows desktop or a connected Android device).
 
-## 3. Without the TFLite model
+## 3. TFLite model (bundled)
 
-The app will start even if `assets/bone_fracture.tflite` is missing. You’ll see a message that the model is not loaded. To enable inference:
+The app loads `assets/bone_fracture.tflite` (fine-tuned June 2026 model).
 
-1. Train and export the model from the ML pipeline (see main README).
-2. Copy `d:\Projects\gloria\ml\export\bone_fracture.tflite` to `d:\Projects\gloria\mobile\assets\bone_fracture.tflite`.
-3. Run the app again.
+After retraining in `ml/`:
 
-Then you can capture or pick an X-ray and see body part, fracture detection, fracture type, and the heat map overlay.
+```powershell
+cd c:\Users\boaky\Music\gloria\ml
+.\venv\Scripts\python.exe export_tflite.py --float32
+Copy-Item -Force export\bone_fracture.tflite ..\mobile\assets\bone_fracture.tflite
+cd ..\mobile
+flutter pub get
+flutter run
+```
+
+Use `--float32` for best Android compatibility.
+
+Then capture or pick an X-ray to see body part, fracture detection, and fracture type.

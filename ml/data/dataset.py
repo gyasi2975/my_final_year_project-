@@ -151,11 +151,49 @@ def index_multitask_split(split: str):
     )
 
 
+def body_part_class_weights(split: str = "train") -> dict[int, float]:
+    """Balanced class weights for imbalanced body parts (e.g. humerus vs hand)."""
+    from sklearn.utils.class_weight import compute_class_weight
+
+    indexed = index_multitask_split(split)
+    if indexed is None:
+        return {}
+    body_labels = indexed[1]
+    classes = np.unique(body_labels)
+    weights = compute_class_weight("balanced", classes=classes, y=body_labels)
+    return {int(c): float(w) for c, w in zip(classes, weights)}
+
+
+def _augment_image(arr: np.ndarray) -> np.ndarray:
+    """Augmentation tuned for anatomical body-part recognition."""
+    import random
+
+    # Skip horizontal flip — similar joints look mirrored and confuse body-part classes.
+    if random.random() < 0.5:
+        factor = random.uniform(0.85, 1.15)
+        arr = np.clip(arr * factor, 0.0, 1.0)
+    if random.random() < 0.4:
+        delta = random.uniform(-0.08, 0.08)
+        arr = np.clip(arr + delta, 0.0, 1.0)
+    if random.random() < 0.2:
+        # Small in-plane rotation via PIL (±8°)
+        from PIL import Image
+
+        angle = random.uniform(-8, 8)
+        img = Image.fromarray((arr * 255).astype(np.uint8))
+        img = img.rotate(angle, resample=Image.BILINEAR)
+        arr = np.array(img, dtype=np.float32) * config.NORMALIZE_SCALE
+    return arr
+
+
 def get_multitask_dataset(
     split: str,
     batch_size: int = config.BATCH_SIZE,
     repeat: bool = True,
     shuffle: bool | None = None,
+    augment: bool | None = None,
+    include_sample_weights: bool = False,
+    balance_body_parts: bool = False,
 ):
     """
     Multi-task dataset: body part + fracture (binary) + fracture type.
@@ -167,7 +205,12 @@ def get_multitask_dataset(
     indexed = index_multitask_split(split)
     if indexed is None:
         return None
-    image_paths, body_labels, fracture_labels, fracture_type_labels, _type_labeled = indexed
+    image_paths, body_labels, fracture_labels, fracture_type_labels, type_labeled = indexed
+
+    body_weights = body_part_class_weights(split) if balance_body_parts else {}
+
+    if augment is None:
+        augment = split == "train"
 
     def load_and_preprocess(path):
         """Load image in Python so we can catch corrupt files; return numpy array."""
@@ -184,29 +227,51 @@ def get_multitask_dataset(
     def gen():
         for i in range(len(image_paths)):
             x = load_and_preprocess(image_paths[i])
+            if augment:
+                x = _augment_image(x)
             y = {
                 "body_part": int(body_labels[i]),
                 "fracture": int(fracture_labels[i]),
                 "fracture_type": int(fracture_type_labels[i]),
             }
-            yield x, y
+            if include_sample_weights:
+                sw = {
+                    "body_part": body_weights.get(int(body_labels[i]), 1.0),
+                    "fracture": 1.0,
+                    "fracture_type": 1.0 if type_labeled[i] else 0.0,
+                }
+                yield x, y, sw
+            else:
+                yield x, y
 
     if shuffle is None:
         shuffle = split == "train"
 
-    ds = tf.data.Dataset.from_generator(
-        gen,
-        output_signature=(
+    y_spec = {
+        "body_part": tf.TensorSpec(shape=(), dtype=tf.int32),
+        "fracture": tf.TensorSpec(shape=(), dtype=tf.int32),
+        "fracture_type": tf.TensorSpec(shape=(), dtype=tf.int32),
+    }
+    if include_sample_weights:
+        output_signature = (
             tf.TensorSpec(shape=(config.IMG_SIZE, config.IMG_SIZE, 3), dtype=tf.float32),
+            y_spec,
             {
-                "body_part": tf.TensorSpec(shape=(), dtype=tf.int32),
-                "fracture": tf.TensorSpec(shape=(), dtype=tf.int32),
-                "fracture_type": tf.TensorSpec(shape=(), dtype=tf.int32),
+                "body_part": tf.TensorSpec(shape=(), dtype=tf.float32),
+                "fracture": tf.TensorSpec(shape=(), dtype=tf.float32),
+                "fracture_type": tf.TensorSpec(shape=(), dtype=tf.float32),
             },
-        ),
-    )
+        )
+    else:
+        output_signature = (
+            tf.TensorSpec(shape=(config.IMG_SIZE, config.IMG_SIZE, 3), dtype=tf.float32),
+            y_spec,
+        )
+
+    ds = tf.data.Dataset.from_generator(gen, output_signature=output_signature)
     if shuffle:
-        ds = ds.shuffle(buffer_size=min(4096, len(image_paths)), seed=42, reshuffle_each_iteration=True)
+        buf = min(2000, len(image_paths))
+        ds = ds.shuffle(buffer_size=buf, seed=42, reshuffle_each_iteration=True)
     ds = ds.batch(batch_size)
     if repeat:
         ds = ds.repeat()

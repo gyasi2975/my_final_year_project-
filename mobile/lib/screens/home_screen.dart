@@ -139,7 +139,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       Expanded(
                         child: AppUI.statCard(
                           label: 'Model status',
-                          value: _modelLoaded ? 'Ready' : (_loadError != null ? 'Error' : 'Loading…'),
+                          value: _modelLoaded ? 'Ready (v1.3)' : (_loadError != null ? 'Error' : 'Loading…'),
                           icon: _modelLoaded ? Icons.check_circle_rounded : Icons.hourglass_empty_rounded,
                           iconColor: _modelLoaded ? AppTheme.success : AppTheme.textSecondary,
                         ),

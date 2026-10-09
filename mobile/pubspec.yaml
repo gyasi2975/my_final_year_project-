@@ -1,7 +1,7 @@
 name: bone_fracture_app
 description: Mobile-based ML system for bone fracture detection and heat map visualization. Offline-capable.
 publish_to: 'none'
-version: 1.0.0+1
+version: 1.3.0+6
 
 environment:
   sdk: '>=3.0.0 <4.0.0'
@@ -9,7 +9,7 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  tflite_flutter: ^0.10.4
+  tflite_flutter: ^0.12.1
   image_picker: ^0.8.7
   image: ^4.0.17
   path_provider: ^2.1.2
@@ -27,6 +27,9 @@ flutter:
   uses-material-design: true
   assets:
     - assets/
+    - assets/bone_fracture.tflite
+    - assets/xray_validity.tflite
+    - assets/fracture_heatmap.tflite
   fonts: []
 
 # App icon: add your logo as assets/icon/app_icon.png (1024x1024 recommended), then run:

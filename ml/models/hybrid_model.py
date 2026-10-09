@@ -20,13 +20,18 @@ def build_hybrid_mobilenetv2(
     num_body_parts: int = len(config.BODY_PARTS),
     num_fracture_types: int = len(config.FRACTURE_TYPES),
     input_shape: tuple = config.MODEL_INPUT_SHAPE,
+    loss_weights: dict | None = None,
+    learning_rate: float = 1e-4,
 ):
     """
     Build hybrid MobileNetV2 with three heads:
-    1. Body part classification (num_body_parts)
+    1. Body part classification (deeper dedicated branch)
     2. Fracture detection (binary)
     3. Fracture type classification (simple, comminuted, greenstick)
     """
+    if loss_weights is None:
+        loss_weights = config.LOSS_WEIGHTS
+
     inputs = keras.Input(shape=input_shape)
 
     base = keras.applications.MobileNetV2(
@@ -36,23 +41,24 @@ def build_hybrid_mobilenetv2(
         pooling="avg",
     )
     base.trainable = True
-    # Fine-tune from later layers for better adaptation
-    for layer in base.layers[:-30]:
+    for layer in base.layers[:-40]:
         layer.trainable = False
 
-    x = base(inputs)
-    x = layers.Dropout(0.3)(x)
+    features = base(inputs)
 
-    # Head 1: Body part
-    body_out = layers.Dense(num_body_parts, activation="softmax", name="body_part")(x)
+    # Dedicated body-part branch (more capacity than a single shared Dense)
+    body_x = layers.Dense(
+        config.BODY_PART_BRANCH_UNITS, activation="relu", name="body_part_dense"
+    )(features)
+    body_x = layers.Dropout(0.4)(body_x)
+    body_out = layers.Dense(num_body_parts, activation="softmax", name="body_part")(body_x)
 
-    # Head 2: Fracture (binary)
-    fracture_out = layers.Dense(1, activation="sigmoid", name="fracture")(x)
-
-    # Head 3: Fracture type (only meaningful when fracture=1)
+    # Fracture heads share a lighter branch
+    task_x = layers.Dropout(0.3)(features)
+    fracture_out = layers.Dense(1, activation="sigmoid", name="fracture")(task_x)
     fracture_type_out = layers.Dense(
         num_fracture_types, activation="softmax", name="fracture_type"
-    )(x)
+    )(task_x)
 
     model = keras.Model(
         inputs=inputs,
@@ -65,17 +71,13 @@ def build_hybrid_mobilenetv2(
     )
 
     model.compile(
-        optimizer=keras.optimizers.Adam(learning_rate=1e-4),
+        optimizer=keras.optimizers.Adam(learning_rate=learning_rate),
         loss={
             "body_part": "sparse_categorical_crossentropy",
             "fracture": "binary_crossentropy",
             "fracture_type": "sparse_categorical_crossentropy",
         },
-        loss_weights={
-            "body_part": 1.0,
-            "fracture": 1.5,
-            "fracture_type": 1.0,
-        },
+        loss_weights=loss_weights,
         metrics={
             "body_part": ["accuracy"],
             "fracture": ["accuracy"],

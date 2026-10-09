@@ -121,35 +121,18 @@ class ResultScreen extends StatelessWidget {
                   ],
                   const SizedBox(height: 20),
                   AppUI.contentCard(
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(AppUI.radiusSmall),
-                      child: Stack(
-                        alignment: Alignment.center,
-                        children: [
-                          resultImage(imagePath),
-                          if (result.hasFracture)
-                            Positioned.fill(
-                              child: Container(
-                                decoration: BoxDecoration(
-                                  gradient: LinearGradient(
-                                    begin: Alignment.center,
-                                    end: Alignment.bottomCenter,
-                                    colors: [
-                                      Colors.transparent,
-                                      Colors.red.withOpacity(0.35),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                            ),
-                        ],
-                      ),
+                    child: _FractureImagePanel(
+                      imagePath: imagePath,
+                      result: result,
                     ),
                   ),
                   const SizedBox(height: 20),
                   _ResultCard(
                     title: 'Body part',
                     value: result.bodyPartName,
+                    subtitle: result.bodyPartConfidence != null
+                        ? 'Confidence: ${(result.bodyPartConfidence! * 100).toStringAsFixed(0)}%'
+                        : null,
                     icon: Icons.accessibility_new_rounded,
                   ),
                   const SizedBox(height: 12),
@@ -184,7 +167,11 @@ class ResultScreen extends StatelessWidget {
                   ],
                   const SizedBox(height: 16),
                   Text(
-                    'Heat map highlights the region of interest. For full Grad-CAM, use the desktop ML pipeline.',
+                    result.hasFracture && result.heatmapGrid != null
+                        ? 'Grad-CAM heat map highlights regions that influenced the fracture prediction. Toggle to compare with the original X-ray.'
+                        : result.hasFracture
+                            ? 'Fracture detected. Heat map unavailable for this scan.'
+                            : 'Heat map is shown when a fracture is detected.',
                     style: TextStyle(
                       fontSize: 12,
                       fontStyle: FontStyle.italic,
@@ -244,6 +231,66 @@ class ResultScreen extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _FractureImagePanel extends StatefulWidget {
+  final String imagePath;
+  final InferenceResult result;
+
+  const _FractureImagePanel({
+    required this.imagePath,
+    required this.result,
+  });
+
+  @override
+  State<_FractureImagePanel> createState() => _FractureImagePanelState();
+}
+
+class _FractureImagePanelState extends State<_FractureImagePanel> {
+  bool _showHeatmap = true;
+
+  @override
+  Widget build(BuildContext context) {
+    final hasHeatmap =
+        widget.result.hasFracture && widget.result.heatmapGrid != null;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (hasHeatmap)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: SegmentedButton<bool>(
+              segments: const [
+                ButtonSegment(
+                  value: true,
+                  label: Text('Heat map'),
+                  icon: Icon(Icons.local_fire_department_rounded, size: 18),
+                ),
+                ButtonSegment(
+                  value: false,
+                  label: Text('Original'),
+                  icon: Icon(Icons.image_rounded, size: 18),
+                ),
+              ],
+              selected: {_showHeatmap},
+              onSelectionChanged: (values) {
+                setState(() => _showHeatmap = values.first);
+              },
+            ),
+          ),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(AppUI.radiusSmall),
+          child: _showHeatmap && hasHeatmap
+              ? resultHeatmapImage(
+                  imagePath: widget.imagePath,
+                  heatmapGrid: widget.result.heatmapGrid!,
+                )
+              : resultImage(widget.imagePath),
+        ),
+      ],
     );
   }
 }

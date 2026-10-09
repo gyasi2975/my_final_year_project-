@@ -5,6 +5,7 @@ Training script per proposal:
 - Evaluation: accuracy, precision, recall, F1-score
 """
 
+import json
 import sys
 import argparse
 from pathlib import Path
@@ -14,7 +15,7 @@ sys.path.insert(0, str(_ML_ROOT))
 
 import config
 from tensorflow import keras
-from data.dataset import get_multitask_dataset, RAW_DIR
+from data.dataset import get_multitask_dataset, count_split_images, RAW_DIR
 from models.hybrid_model import build_hybrid_mobilenetv2
 
 
@@ -23,65 +24,99 @@ def main():
     parser.add_argument("--epochs", type=int, default=config.EPOCHS)
     parser.add_argument("--batch-size", type=int, default=config.BATCH_SIZE)
     parser.add_argument("--save", type=str, default="checkpoints/bone_fracture_model.keras")
+    parser.add_argument("--history", type=str, default="checkpoints/training_history.json")
+    parser.add_argument(
+        "--monitor",
+        type=str,
+        default="val_fracture_accuracy",
+        choices=[
+            "val_fracture_accuracy",
+            "val_body_part_accuracy",
+            "fracture_accuracy",
+            "body_part_accuracy",
+        ],
+        help="Metric for checkpointing and early stopping",
+    )
+    parser.add_argument(
+        "--balance-body-parts",
+        action="store_true",
+        help="Use class-balanced sample weights for body-part head",
+    )
     args = parser.parse_args()
+
     save_path = Path(args.save)
     if not save_path.is_absolute():
         save_path = _ML_ROOT / save_path
     args.save = str(save_path)
 
-    train_ds = get_multitask_dataset("train", batch_size=args.batch_size)
-    if train_ds is None:
+    history_path = Path(args.history)
+    if not history_path.is_absolute():
+        history_path = _ML_ROOT / history_path
+
+    save_path.parent.mkdir(parents=True, exist_ok=True)
+
+    n_train = count_split_images("train")
+    if n_train == 0:
         print(
             "No training data found. Please add data under:\n"
             f"  {RAW_DIR / 'train'}\n"
             "Structure: train/{body_part}/normal/ or train/{body_part}/fracture_{type}/"
         )
-        # Create minimal dummy data for structure demo / CI
-        import tensorflow as tf
-        import numpy as np
-        n = 64
-        train_ds = tf.data.Dataset.from_tensor_slices((
-            np.random.rand(n, config.IMG_SIZE, config.IMG_SIZE, 3).astype(np.float32) * 0.5,
-            {
-                "body_part": np.random.randint(0, len(config.BODY_PARTS), size=n),
-                "fracture": np.random.randint(0, 2, size=n).astype(np.float32),
-                "fracture_type": np.random.randint(0, len(config.FRACTURE_TYPES), size=n),
-            },
-        )).batch(args.batch_size).prefetch(1)
-        val_ds = None
-    else:
-        val_ds = get_multitask_dataset("valid", batch_size=args.batch_size)
-        if val_ds is None:
-            val_ds = get_multitask_dataset("validation", batch_size=args.batch_size)
+        return None
+
+    train_ds = get_multitask_dataset(
+        "train",
+        batch_size=args.batch_size,
+        include_sample_weights=True,
+        augment=True,
+        balance_body_parts=args.balance_body_parts,
+    )
+    val_ds = get_multitask_dataset("valid", batch_size=args.batch_size, repeat=False, shuffle=False)
+    if val_ds is None:
+        val_ds = get_multitask_dataset("validation", batch_size=args.batch_size, repeat=False, shuffle=False)
 
     model = build_hybrid_mobilenetv2()
     model.summary()
 
-    # With repeat(), set steps per epoch so training doesn't run forever
-    train_dir = RAW_DIR / "train"
-    n_train = sum(1 for _ in train_dir.rglob("*.*") if _.suffix.lower() in (".png", ".jpg", ".jpeg", ".bmp")) if train_dir.exists() else 3271
     steps_per_epoch = max(1, n_train // args.batch_size)
     val_steps = None
-    if val_ds:
-        valid_dir = RAW_DIR / "valid"
-        n_valid = sum(1 for _ in valid_dir.rglob("*.*") if _.suffix.lower() in (".png", ".jpg", ".jpeg", ".bmp")) if valid_dir.exists() else 411
+    n_valid = count_split_images("valid")
+    if val_ds and n_valid > 0:
         val_steps = max(1, n_valid // args.batch_size)
 
-    monitor = "val_fracture_accuracy" if val_ds else "fracture_accuracy"
+    monitor = args.monitor
+    if val_ds is None and monitor.startswith("val_"):
+        monitor = monitor.replace("val_", "")
+        print(f"No validation set — monitoring {monitor} instead.")
+
     callbacks = [
         keras.callbacks.ModelCheckpoint(
             args.save,
             save_best_only=True,
             monitor=monitor,
             mode="max",
+            verbose=1,
         ),
         keras.callbacks.EarlyStopping(
-            patience=5,
+            patience=7,
             restore_best_weights=True,
             monitor=monitor,
             mode="max",
+            verbose=1,
+        ),
+        keras.callbacks.ReduceLROnPlateau(
+            monitor=monitor,
+            mode="max",
+            factor=0.5,
+            patience=3,
+            min_lr=1e-6,
+            verbose=1,
         ),
     ]
+
+    print(f"Training images: {n_train} | Validation images: {n_valid}")
+    print(f"Steps/epoch: {steps_per_epoch} | Val steps: {val_steps} | Monitor: {monitor}")
+
     if val_ds:
         history = model.fit(
             train_ds,
@@ -92,15 +127,18 @@ def main():
             callbacks=callbacks,
         )
     else:
+        print("Warning: no validation set — training without validation.")
         history = model.fit(
             train_ds,
-            epochs=min(2, args.epochs),
+            epochs=args.epochs,
             steps_per_epoch=steps_per_epoch,
             callbacks=callbacks,
         )
-    # Always save final weights (checkpoint may only have saved "best" so far)
+
     model.save(args.save)
+    history_path.write_text(json.dumps(history.history, indent=2), encoding="utf-8")
     print("Training done. Model saved to", args.save)
+    print("History saved to", history_path)
     return model
 
 
